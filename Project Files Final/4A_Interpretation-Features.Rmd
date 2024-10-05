@@ -1,0 +1,127 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Part 4A - Interpretation Features"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+tidymodels_prefer()
+library(vip)
+```
+
+
+```{r}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+
+dfii <- df %>% 
+  mutate(y = boot::logit( (response - 0) / (100 - 0) ) ) %>% 
+  select(R, G, B, 
+         Lightness, Saturation, Hue,
+         y)
+
+dfiiiA <- df %>% 
+  select(-response)
+
+
+dfiiiD <- df %>% 
+  select(-response) %>% 
+  mutate(outcome = ifelse(outcome == 1, 'event', 'non_event'),
+         outcome = factor(outcome, levels = c('event', 'non_event')))
+```
+
+----
+
+## Best models
+
+The best model for the **regression task** was identified in part 2D4 as the XGB model.  
+The best model for the **classification task** was identified in part 3D4 as the XGB model.  
+
+
+**Read in the respective best model for each task.**  
+
+```{r}
+mod_regr <- readr::read_rds("mod_2D_adv_best_wflow.rds") 
+mod_regr_fit <- mod_regr %>% fit(dfii)
+
+mod_clas <- readr::read_rds("mod_3D_adv_best_wflow.rds") 
+mod_clas_fit <- mod_clas %>% fit(dfiiiD)
+```
+
+----
+
+## Feature Importance
+
+**Plot the top 20 most important features for each model and discuss.**  
+
+### Regression
+
+- For the regression model, since we are predicting time spent on sale, sentiment derived inputs that are associated with longer communications, or stronger responses from a customer (e.g. very positive, very negative), are expected to be important to predict the sale time.  
+
+**First examine all coefficients.**
+
+```{r}
+mod_regr_fit %>%
+  extract_fit_parsnip() %>%
+  vip(500) +
+    ggtitle("regression: XGB")
+```
+
+**Check the top 20 coefficients.**
+
+```{r}
+mod_regr_fit %>%
+  extract_fit_parsnip() %>%
+  vip(20) +
+    ggtitle("regression: XGB")
+```
+
+- From regression model:
+  - For continuous input, 'G' is the most important.
+  - The categorical input `Lightness` with `pale` appears to be important. 
+
+### Classification
+
+- For the classification model, inputs that can reflect true intention of customer to purchase, or if a customer is interested in a product or not, could be more effective in predicting the `outcome` of a sale.  
+
+**First examine all coefficients.**
+
+```{r}
+mod_clas_fit %>% 
+  extract_fit_parsnip() %>%
+  vip(500) +
+    ggtitle("classification: XGB")
+```
+
+**Check the top 20 coefficients.**
+
+```{r}
+mod_clas_fit %>% 
+  extract_fit_parsnip() %>%
+  vip(20) +
+    ggtitle("classification: XGB")
+```
+
+- From classification model:
+  - For continuous input, 'Hue' is the most important. 
+
+----
+
+## Conclusions
+
+- We see the set of important features for the regression and classification tasks are different. Though there are some common inputs that appear to be important in both models. The importance of such common features are different too.
+
+- In the regression task, the important categorical input is Lightness with 'pale'.
+- The most important continuous inputs are R and G.
+
+- In the classification task, the important categorical input is Saturation with 'gray'.
+- The most important continuous inputs is Hue, followed by G and B.
+
+In the color model RGB, G seems to dominate other inputs.
+----

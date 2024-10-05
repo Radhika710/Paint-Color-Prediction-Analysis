@@ -1,0 +1,76 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Part 3D4, Classification - Best Model"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_packages}
+library(tidyverse)
+theme_set(theme_linedraw())
+library(tidymodels)
+tidymodels_prefer()
+```
+
+----
+
+## Regression: Best Model
+
+Compare and choose the best model for the classification task from:  
+
+- Best baseline generalized linear model
+- Best regularized Elastic Net model
+- Best advanced model
+
+**Read in the 3 best models from part 3D1 - 3D3.**  
+
+```{r}
+mod_3D_glm_best_resample <- readr::read_rds("mod_3D_glm_best_resample.rds")
+mod_3D_enet_best_resample <- readr::read_rds("mod_3D_enet_best_resample.rds")
+mod_3D_adv_best_resample <- readr::read_rds("mod_3D_adv_best_resample.rds")
+my_models <- mget(ls(pattern = "^mod_3D.+_resample"))
+```
+
+**Compare model parameters.**  
+
+```{r metrics}
+my_models %>%
+  map_dfr(collect_metrics, .id="model") %>%
+  ggplot(aes(x=model, color=model)) +
+  geom_pointrange(
+    aes(y = mean, ymin = mean - std_err, ymax = mean + std_err, group = model)) +
+  facet_wrap(~ .metric, scales = "free_y") +
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
+```
+
+- To maximize accuracy, the XGB model (red) should be selected. 
+- Choose the **XGB model as best model for the classification task**.  
+
+**Visualize the ROC curves for the three models.**  
+
+```{r }
+my_models %>%
+  map_dfr(collect_predictions, .id="model") %>%
+  group_by(model) %>%
+  roc_curve(outcome, .pred_event) %>%
+  autoplot()
+```
+
+- The ROC curve of the three models are quite similar.
+
+**Visualize the ROC curve w.r.t each repeated resample folds.**  
+
+```{r roc}
+my_models %>%
+  map_dfr(collect_predictions, .id="model") %>%
+  group_by(model, id, id2) %>%
+  roc_curve(outcome, .pred_event) %>%
+  autoplot() + facet_wrap(~ model) +
+  theme(legend.position = "none")
+```
+
+----

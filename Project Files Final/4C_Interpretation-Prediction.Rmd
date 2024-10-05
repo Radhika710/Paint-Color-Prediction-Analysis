@@ -1,0 +1,201 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Part 4C, Interpretation Prediction"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+theme_set(theme_linedraw())
+library(tidymodels)
+tidymodels_prefer()
+library(vip)
+```
+
+
+```{r}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+
+dfii <- df %>% 
+  mutate(y = boot::logit( (response - 0) / (100 - 0) ) ) %>% 
+  select(R, G, B, 
+         Lightness, Saturation, Hue,
+         y)
+
+dfiiiA <- df %>% 
+  select(-response)
+
+
+dfiiiD <- df %>% 
+  select(-response) %>% 
+  mutate(outcome = ifelse(outcome == 1, 'event', 'non_event'),
+         outcome = factor(outcome, levels = c('event', 'non_event')))
+```
+
+----
+
+- You must visualize the trends associated with the HARDEST and EASIEST to predict Lightness and Saturation combinations  with respect to the TWO most important continuous inputs.
+
+----
+
+**Read in the respective best model for each task.**  
+```{r}
+df_regr <- df %>% select(-c(outcome)) %>% mutate(response = log(response))
+df_clas <- df %>% select(-c(response))
+```
+
+```{r}
+mod_regr <- readr::read_rds("mod_2D_adv_best_wflow.rds")
+mod_regr_fit <- mod_regr %>% fit(dfii)
+
+mod_clas <- readr::read_rds("mod_3D_adv_best_wflow.rds")
+mod_clas_fit <- mod_clas %>% fit(dfiiiD)
+```
+
+----
+
+## Regression
+
+For my best regression model, the most important continuous feature is the `R`, followed by `G`. 
+```{r}
+#library(usethis) 
+#usethis::edit_r_environ()
+```
+
+```{r}
+make_test_input_grid <- function(inputs, data, fixed_values = list()) {
+  grid <- expand.grid(lapply(data[, inputs, drop = FALSE], unique))
+
+  # Add fixed values
+  if (!is.null(fixed_values)) {
+    for (var in names(fixed_values)) {
+      grid[[var]] <- fixed_values[[var]]
+    }
+  }
+
+  return(grid)
+}
+
+my_inputs <- setdiff(names(dfii),"response")
+viz_grid <- make_test_input_grid(my_inputs, dfii, c("R")) %>%
+  mutate(Saturation = "neutral")
+
+predict(mod_regr_fit, new_data = viz_grid) %>% bind_cols(viz_grid) %>%
+  ggplot() +
+  geom_line(aes(x=xw_01,y=.pred,color=xa_08)) +
+  facet_wrap(~xa_08) +
+  scale_color_viridis_c()
+
+```
+```{r}
+library(tidyverse)
+library(tidymodels)
+
+# Generate a grid of values for R and G
+grid_values <- expand.grid(
+  R = seq(min(dfii$R), max(dfii$R), length.out = 101),
+  G = seq(min(dfii$G), max(dfii$G), length.out = 101),
+  B = seq(min(dfii$B), max(dfii$B), length.out = 101),
+  Hue = seq(min(dfii$Hue), max(dfii$Hue), length.out = 101)
+)
+
+# Create a data frame for the specified Lightness and Saturation combinations
+specific_combinations <- data.frame(
+  Lightness = rep('dark', nrow(grid_values)),
+  Saturation = rep('neutral', nrow(grid_values))
+)
+
+# Combine the grid values with the specified Lightness and Saturation combinations
+grid_values <- bind_cols(grid_values, specific_combinations)
+
+# Make predictions for the regression model
+predictions_regr <- predict(mod_regr_fit, new_data = grid_values) %>%
+  as_tibble() %>%
+  rename(logit_response = .pred)
+
+# Make predictions for the classification model
+predictions_class <- predict(mod_clas_fit, new_data = grid_values, type = "prob") %>%
+  as_tibble() %>%
+  rename(event_prob = .pred_event)
+
+# Combine predictions with the grid values
+predictions <- bind_cols(grid_values, predictions_regr, predictions_class)
+
+# Create a surface plot using geom_raster()
+ggplot(predictions, aes(x = R, y = G)) +
+  geom_raster(aes(fill = ifelse(!is.na(logit_response), logit_response, event_prob)),
+              interpolate = TRUE) +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(title = "Surface Plot of Predictive Trends",
+       x = "R (Primary Continuous Input)",
+       y = "G (Secondary Continuous Input)",
+       fill = "Logit-Transformed Response (Regression) or Event Probability (Classification)")
+```
+
+
+
+```{r}
+dfii %>% 
+  ggplot(aes(x = G, y = R, fill = y)) +
+  geom_raster() +
+  scale_fill_viridis_c() +  # You can use a different color scale if you prefer
+  labs(title = "Surface Plot of Predictive Trends",
+       x = "Primary Continuous Input",
+       y = "Secondary Continuous Input",
+       fill = "LOGIT-transformed Response") +
+  theme_minimal()
+```
+
+- For the regression task, my best model is a Elastic Net model. The prediction appears to be linearly related to the primary input. This is expected as the underlying model is just a linear model without nonlinear basis. 
+- From the prediction, the response increase as either input increases.  
+
+----
+
+## Classification
+
+For my best classification model, the top 2 ranked important features are `xn_01`, `xn_03`.  The most unpredictable customer for the classification task is customer `Other`, which is most abundant in region `YY`. 
+
+```{r}
+my_inputs <- setdiff(names(dfiiiD),"outcome")
+viz_grid <- make_test_input_grid(my_inputs, dfiiiD, c("R","G")) %>%
+  mutate(Lightness = "neutral")
+
+predict(mod_clas_fit, new_data = viz_grid, type = "prob") %>% 
+  bind_cols(viz_grid) %>% 
+  ggplot() +
+  geom_line(aes(x=xn_01,y=.pred_event,color=xn_03)) +
+  facet_wrap(~xn_03) +
+  scale_color_viridis_c()
+```
+
+- The best model for the classification task is a SVM model.
+- The event probability decreases as either input increases. 
+
+----
+
+## Predict the Holdout Set
+
+```{r}
+holdout <- readr::read_csv('./data/final_project_holdout_inputs.csv', col_names = TRUE)
+
+my_pred <-
+  predict(mod_regr_fit, new_data = holdout) %>%
+  cbind(predict(mod_clas_fit, new_data = holdout, type = "prob")) %>% 
+  rename("y"=.pred, "probability"=.pred_event) %>% 
+  rowid_to_column(var="id") %>% 
+  select(-.pred_non_event) %>% 
+  mutate(outcome=ifelse(probability>=0.5,"event","non-event"))
+
+readr::write_csv(my_pred, "my_holdout_pred.csv")
+```
+
+**Compute metrics**
+
+https://anastasia-sosnovskikh.shinyapps.io/infsci2595-spring2022/
+
+----

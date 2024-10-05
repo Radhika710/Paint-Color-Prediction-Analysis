@@ -1,0 +1,119 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Part 2C, Regression - Model Predictions"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_packages}
+library(tidyverse)
+theme_set(theme_linedraw())
+library(bayesplot)
+library(ggplot2)
+library(broom)
+```
+
+```{r}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+dfii <- df %>% 
+  mutate(y = boot::logit( (response - 0) / (100 - 0) ) ) %>% 
+  select(R, G, B, 
+         Lightness, Saturation, Hue,
+         y)
+
+dfii %>% glimpse()
+```
+
+```{r}
+modA <- readr::read_rds("Model_5.rds")
+modB <- readr::read_rds("Model_7.rds")
+```
+
+
+```{r}
+# Generate predictions
+reference_value_G <- mean(dfii$G)  # Use a reference value for G
+reference_value_B <- mean(dfii$B)  # Use a reference value for B
+reference_value_Hue <- mean(dfii$Hue)  # Use a reference value for Hue
+reference_value_Lightness <- unique(dfii$Lightness)  # Use a reference value for Lightness
+reference_value_Saturation <- unique(dfii$Saturation)  # Use a reference value for Saturation
+```
+
+
+```{r}
+
+pred_df <- expand.grid(
+  R = seq(min(dfii$R), max(dfii$R), length.out = 100),
+  G = reference_value_G,
+  B = reference_value_B,
+  Hue = reference_value_Hue,
+  Lightness = unique(dfii$Lightness),
+  Saturation = unique(dfii$Saturation)
+)
+
+# Predictions for modA
+predA <- predict(modA, newdata = pred_df, type = "response", se.fit = TRUE)
+
+# Extract mean and standard deviation for modA
+mean_A <- predA$fit
+std_dev_A <- sqrt(predA$se.fit^2)
+
+# Create a dataframe for plotting modA
+plot_df_A <- data.frame(
+  R = pred_df$R,
+  G = pred_df$G,
+  y = predict(modA, newdata = pred_df, type = "response"),
+  mean_A = mean_A,
+  upper_ci_A = mean_A + 1.96 * std_dev_A,
+  lower_ci_A = mean_A - 1.96 * std_dev_A,
+  upper_pi_A = predA$fit + 1.96 * predA$se.fit * 2,
+  lower_pi_A = predA$fit - 1.96 * predA$se.fit * 2
+)
+
+# Plotting the trends for modA
+ggplot(plot_df_A, aes(x = R)) +
+  geom_line(aes(y = y), color = "black", size = 1, linetype = "dashed") +
+  geom_line(aes(y = mean_A), color = "blue", size = 1, linetype = "solid") +
+  geom_ribbon(aes(ymin = lower_ci_A, ymax = upper_ci_A), fill = "blue", alpha = 0.2) +
+  geom_ribbon(aes(ymin = lower_pi_A, ymax = upper_pi_A), fill = "blue", alpha = 0.1) +
+  facet_wrap(~G, scales = "free_y") +
+  labs(x = "R", y = "LOGIT-transformed Response", title = "Predictive Trends for modA") +
+  theme_minimal()
+```
+
+
+```{r}
+# Predictions for modB
+predB <- predict(modB, newdata = pred_df, type = "response", se.fit = TRUE)
+
+# Extract mean and standard deviation for modB
+mean_B <- predB$fit
+std_dev_B <- sqrt(predB$se.fit^2)
+
+# Create a dataframe for plotting modB
+plot_df_B <- data.frame(
+  R = pred_df$R,
+  G = pred_df$G,
+  y = predict(modB, newdata = pred_df, type = "response"),
+  mean_B = mean_B,
+  upper_ci_B = mean_B + 1.96 * std_dev_B,
+  lower_ci_B = mean_B - 1.96 * std_dev_B,
+  upper_pi_B = predB$fit + 1.96 * predB$se.fit * 2,
+  lower_pi_B = predB$fit - 1.96 * predB$se.fit * 2
+)
+
+# Plotting the trends for modB
+ggplot(plot_df_B, aes(x = R)) +
+  geom_line(aes(y = y), color = "black", size = 1, linetype = "dashed") +
+  geom_line(aes(y = mean_B), color = "red", size = 1, linetype = "solid") +
+  geom_ribbon(aes(ymin = lower_ci_B, ymax = upper_ci_B), fill = "red", alpha = 0.2) +
+  geom_ribbon(aes(ymin = lower_pi_B, ymax = upper_pi_B), fill = "red", alpha = 0.1) +
+  facet_wrap(~G, scales = "free_y") +
+  labs(x = "R", y = "LOGIT-transformed Response", title = "Predictive Trends for modB") +
+  theme_minimal()
+
+```

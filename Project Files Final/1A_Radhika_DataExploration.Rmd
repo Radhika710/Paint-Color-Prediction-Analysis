@@ -1,0 +1,250 @@
+---
+title: "PPG Paint Colors: Final Project"
+subtitle: "Data Exploration"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+This RMarkdown shows how to read in the final project data. It also shows how to calculate the logit-transformed response and setup the binary outcome for use with `caret` or `tidymodels`. It also demonstrates how to fit a simple model (with `lm()`), save that model, and load it back into the workspace. You may find these actions helpful as you work through the project.  
+
+**You must download the data from Canvas and save the data in the same directory as this RMarkdown file.**  
+
+## Load packages
+
+This example uses the `tidyverse` suite of packages.  
+
+```{r, load_tidyverse}
+library(tidyverse)
+library(cowplot)
+library(ggplot2)
+```
+
+## Read data
+
+Please download the final project data from Canvas. If this Rmarkdown file is located in the same directory as the downloaded CSV file, it will be able to load in the data for you. It is **highly** recommended that you use an RStudio RProject to easily manage the working directory and file paths of the code and objects associated with the final project.  
+
+The code chunk below reads in the final project data.  
+
+```{r, read_final_data}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+```
+
+The `readr::read_csv()` function displays the data types and column names associated with the data. However, a glimpse is shown below that reveals the number of rows and also shows some of the representative values for the columns.  
+
+```{r, show_data_glimpse}
+df %>% glimpse()
+```
+Assign numeric and non-numeric fields into variables for reference later.  
+
+```{r}
+sel_num <- df %>% select_if(is_double) %>% select(sort(names(.))) %>% colnames()
+sel_cat <- df %>% select(!one_of(sel_num)) %>% colnames()
+```
+
+
+Performing some required data transformations for the `response` and `outcome` fields to facilitate processing.  
+
+```{r}
+df_eda <- df %>% mutate(
+  log_response = log(response),
+  binary_outcome = ifelse(outcome=="event", 1, 0))
+```
+
+
+## Categorical Variables
+
+### Data Summary
+
+**Get a summary of the categorical variables Lightness and Saturation, as well as the binary response. Check missing values, unique values.**  
+
+```{r}
+summarize_cate_var <- function(df) {
+  tibble(
+    variable = names(df),
+    n_missing = map_dbl(df, ~sum(is.na(.))),
+    n_levels = map_dbl(df, n_distinct),
+  ) %>% mutate(
+    percent_missing = n_missing/nrow(df)*100,
+  )
+}
+
+summ_cate <- df_eda %>% select(all_of(sel_cat)) %>% summarize_cate_var()
+summ_cate %>% knitr::kable(caption = "categorical variables overview")
+```
+### Data Distribution
+
+**Count the unique levels for each category and sort by count for each category.**  
+
+```{r}
+df_eda %>% select(sel_cat) %>% pivot_longer(everything(), names_to ="var", values_to="level") %>%
+  count(var,level) %>% arrange(var,n) %>%
+  knitr::kable(caption = "categorical variables count")
+```
+
+**Use barchart to visualize the distribution of categorical input and binary response variables.**  
+
+```{r}
+df_eda %>% select(sel_cat) %>%
+  pivot_longer(everything()) %>%
+  ggplot() +
+  geom_bar(aes(x=value, fill=value)) +
+  facet_grid(~name, scales="free_x", space="free_x") +
+  xlab("") + theme(legend.position="none")
+```
+
+
+## Continuous Variables
+
+### Data Summary
+
+**Get a high level summary of the numeric variables. Check missing values, unique values, range and median.**  
+
+```{r}
+summarize_nume_var <- function(df) {
+  tibble(
+    variable = names(df),
+    n_missing = map_dbl(df, ~sum(is.na(.))),
+    n_unique = map_dbl(df, n_distinct),
+    min = map_dbl(df, min),
+    median = map_dbl(df, median),
+    max = map_dbl(df, max)
+  ) %>% mutate(
+    percent_missing = n_missing/nrow(df)*100,
+    percent_unique = n_unique/nrow(df)*100,
+  )
+}
+
+summ_nume <- summarize_nume_var(df %>% select(all_of(sel_num)))
+summ_nume %>% knitr::kable(caption = "numeric variables overview")
+```
+
+
+**Examine the distribution of the continuous response.**  
+```{r}
+ggplot(df_eda, aes(x = R, fill = "R")) +
+  geom_histogram(position = "identity", alpha = 0.7, bins = 30) +
+  geom_histogram(aes(x = G, fill = "G"), position = "identity", alpha = 0.7, bins = 30) +
+  geom_histogram(aes(x = B, fill = "B"), position = "identity", alpha = 0.7, bins = 30) +
+  geom_histogram(aes(x = Hue, fill = "Hue"), position = "identity", alpha = 0.7, bins = 30) +
+  labs(title = "Combined Histogram for R, G, B, Hue",
+       x = "Values",
+       y = "Frequency") +
+  scale_fill_manual(values = c("R" = "blue", "G" = "green", "B" = "red", "Hue" = "purple")) +
+  theme_minimal()
+```
+The distribution of continuous variables seems gaussian.
+
+
+### Conditioned on Categorical
+#Condition (group) the continuous variables based on the categorical variables.
+```{r}
+# Boxplot for R grouped by Lightness and Saturation
+ggplot(df, aes(x = Lightness, y = R, fill = Saturation)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of R by Lightness and Saturation")
+```
+
+# Boxplot for G grouped by Lightness and Saturation
+```{r}
+ggplot(df, aes(x = Lightness, y = G, fill = Saturation)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of G by Lightness and Saturation")
+```
+
+
+# Boxplot for B grouped by Lightness and Saturation
+```{r}
+ggplot(df, aes(x = Lightness, y = B, fill = Saturation)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of B by Lightness and Saturation")
+```
+
+# Boxplot for hue grouped by Lightness and Saturation
+```{r}
+ggplot(df, aes(x = Lightness, y = Hue, fill = Saturation)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Hue by Lightness and Saturation")
+```
+
+
+
+
+###Visualize the relationships between the continuous inputs, are they correlated?
+
+**Check correlation between continuous input variables.**  
+
+```{r}
+df_eda %>% select(all_of(sel_num)) %>% select(-response) %>%
+  cor() %>%
+  corrplot::corrplot(type="upper", method="color", diag=F)
+```
+
+#Visualize the relationships between the continuous outputs (response and the LOGIT-transformed response, y) with respect to the continuous INPUTS.
+
+
+**Examine the response with regard to every continuous input.**  
+
+```{r}
+library(plotly)
+scatterplot <- plot_ly(data = df_eda, type = "scatter", mode = "markers", alpha = 0.7) %>%
+  add_trace(x = ~R, y = ~response, name = "R") %>%
+  add_trace(x = ~G, y = ~response, name = "G") %>%
+  add_trace(x = ~B, y = ~response, name = "B") %>%
+  add_trace(x = ~Hue, y = ~response, name = "Hue") %>% 
+  plotly::layout(title = "Scatterplot Matrix of Continuous Inputs vs. Response",
+           showlegend = TRUE,
+           legend = list(x = 0.5, y = 1, traceorder = "normal", font = list(family = "sans-serif", size = 12, color = "black")))
+
+# Show the plot
+scatterplot
+```
+
+- There are correlations between many inputs and the `response`.  
+  - Indicate these inputs could be used to predict the `response`.  
+  - Since we'll log-transform the `response` to remove lower bound for modelling, will examine again at log-transformed scale.  
+
+**Examine the log-transformed response with regard to every continuous input.**  
+
+```{r}
+scatterplot <- plot_ly(data = df_eda, type = "scatter", mode = "markers", alpha = 0.7) %>%
+  add_trace(x = ~R, y = ~log_response, name = "R") %>%
+  add_trace(x = ~G, y = ~log_response, name = "G") %>%
+  add_trace(x = ~B, y = ~log_response, name = "B") %>%
+  add_trace(x = ~Hue, y = ~log_response, name = "Hue") %>% 
+  plotly::layout(title = "Scatterplot Matrix of Continuous Inputs vs. Response",
+           showlegend = TRUE,
+           legend = list(x = 0.5, y = 1, traceorder = "normal", font = list(family = "sans-serif", size = 12, color = "black")))
+
+# Show the plot
+scatterplot
+```
+
+
+
+###Visualize the behavior of the binary outcome with respect to the continuous inputs
+
+```{r}
+df_long <- gather(df_eda, key = "variable", value = "value", R, G, B, Hue)
+ggplot(df_long, aes(x = value, y = outcome, color = outcome)) +
+  geom_point() +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Scatter Plots of Continuous Inputs vs. Binary Outcome",
+       x = "Variable",
+       y = "Binary Outcome")
+```
+#visualize the behavior of the binary outcome with respect to the categorical INPUTS?
+```{r}
+df_long <- gather(df_eda, key = "variable", value = "value", Lightness,Saturation)
+ggplot(df_long, aes(x = value, y = outcome, color = outcome)) +
+  geom_point() +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Scatter Plots of Continuous Inputs vs. Binary Outcome",
+       x = "Variable",
+       y = "Binary Outcome")
+```

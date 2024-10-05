@@ -1,0 +1,222 @@
+---
+title: "PPG Paint Colors: Final Project"
+subtitle: "Part 2, Regression"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+This RMarkdown shows how to read in the final project data. It also shows how to calculate the logit-transformed response and setup the binary outcome for use with `caret` or `tidymodels`. It also demonstrates how to fit a simple model (with `lm()`), save that model, and load it back into the workspace. You may find these actions helpful as you work through the project.  
+
+**You must download the data from Canvas and save the data in the same directory as this RMarkdown file.**  
+
+## Load packages
+
+This example uses the `tidyverse` suite of packages.  
+
+```{r, load_tidyverse}
+library(tidyverse)
+```
+
+## Read data
+
+Please download the final project data from Canvas. If this Rmarkdown file is located in the same directory as the downloaded CSV file, it will be able to load in the data for you. It is **highly** recommended that you use an RStudio RProject to easily manage the working directory and file paths of the code and objects associated with the final project.  
+
+The code chunk below reads in the final project data.  
+
+```{r, read_final_data}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+```
+
+The `readr::read_csv()` function displays the data types and column names associated with the data. However, a glimpse is shown below that reveals the number of rows and also shows some of the representative values for the columns.  
+
+```{r, show_data_glimpse}
+df %>% glimpse()
+```
+
+The data consist of continuous and categorical inputs. The `glimpse()` shown above reveals the data type for each variable which state to you whether the input is continuous or categorical. The RGB color model inputs, `R`, `G`, and `B` are continuous (dbl) inputs. The HSL color model inputs consist of 2 categorical inputs, `Lightness` and `Saturation`, and a continuous input, `Hue`. Two outputs are provided. The continuous output, `response`, and the Binary output, `outcome`. However, the data type of the Binary outcome is numeric because the Binary `outcome` is **encoded** as `outcome = 1` for the EVENT and `outcome = 0` for the NON-EVENT.  
+
+## Regression task
+
+As stated in the project guidelines, you will **not** model the continuous output, `response`, directly. The `response` is a bounded variable between 0 and 100. The `response` must be transformed to an unbounded variable to appropriately be modeled by a Gaussian likelihood. We are making this transformation because we want the **uncertainty** in the predicted output to also satisfy output constraints. If we did not make this transformation the uncertainty could violate the bounds, which would mean the model is providing unphysical results! By logit-transforming `response`, we will fully respect the bounds of the output variable.  
+
+The code chunk below assembles the data for Part ii) of the project. You should use this data set for all regression modeling tasks. The logit-transformed output is named `y`. The `dfii` dataframe as the original `response` and Binary output, `outcome`, removed. This way you can focus on the variables specific to the regression task.  
+
+
+```{r, make_reg_data}
+dfii <- df %>% 
+  mutate(y = boot::logit( (response - 0) / (100 - 0) ) ) %>% 
+  select(R, G, B, 
+         Lightness, Saturation, Hue,
+         y)
+
+dfii %>% glimpse()
+```
+
+
+#Loading the library
+```{r}
+library(caret)
+library(splines)
+library(dplyr)
+library(coefplot)
+```
+
+
+## Model Fitting
+
+**Create linear models to fit the data.**  
+
+### Predefined Models
+
+**Fit 10 linear models.**  
+
+Use lm() to fit linear models. You must use the following:
+1 Intercept-only model – no INPUTS!
+2 Categorical variables only – linear additive
+3 Continuous variables only – linear additive
+4 All categorical and continuous variables – linear additive
+5 Interaction of the categorical inputs with all continuous inputs main effects
+6 Add categorical inputs to all main effect and all pairwise interactions of continuous inputs
+7 Interaction of the categorical inputs with all main effect and all pairwise interactions of continuous inputs
+•  3 models with basis functions of your choice
+8 Try non-linear basis functions based on your EDA.
+9 Can consider interactions of basis functions with other basis functions!
+10 Can consider interactions of basis functions with the categorical inputs!
+
+```{r}
+Model_1 <- lm(y ~ 1, data = dfii)
+```
+
+```{r}
+Model_2 <- lm(y ~ Lightness + Saturation, data = dfii)
+```
+
+```{r}
+Model_3 <- lm(y ~ R + G + B + Hue, data = dfii)
+```
+
+```{r}
+Model_4 <- lm(y ~ ., dfii)
+```
+
+```{r}
+Model_5 <- lm(y ~ (Lightness + Saturation) * (R + G + B + Hue), data = dfii)
+```
+
+```{r}
+Model_6 <- lm(y ~ (R + G + B + Hue)^2 + Lightness + Saturation, data = dfii)
+```
+
+```{r}
+Model_7 <- lm(y ~ (Lightness + Saturation) * (R + G + B + Hue)^2, data = dfii)
+```
+
+```{r}
+Model_8 <- lm(y ~ R + G + B + Hue + (R * G) + (R * B) + (G * Hue), data = dfii)
+
+Model_9 <- lm(y ~  R + G + B + Hue + R^2 + G^2 + (R * G) + (R * G * B) + Hue^2, data = dfii)
+
+Factor_Lightness <- as.factor(dfii$Lightness)
+Factor_Saturation <- as.factor(dfii$Saturation)
+Model_10 <- lm(y ~ R + G + R^2 + G^2 + (R*as.numeric(Factor_Lightness)) + (G*as.numeric(Factor_Saturation)) + Lightness + Saturation, data = dfii)
+```
+
+
+```{r}
+extract_metrics <- function(mod_object, mod_name)
+{
+  broom::glance(mod_object) %>% 
+    mutate(model_name = mod_name)
+}
+```
+
+#The logistic regression model training set performance metrics are extracted for each of the 10 models fit in the previous problem.
+```{r}
+glm_mle_results <- purrr::map2_dfr(list(Model_1,Model_2,Model_3,Model_4,Model_5,Model_6,Model_7,Model_8,Model_9,Model_10),
+                                   LETTERS[1:10],
+                                   extract_metrics)
+
+```
+
+### Model Comparison:
+
+```{r}
+#The AIC and BIC are visualized for the 8 models.
+glm_mle_results %>% 
+  select(model_name, AIC, BIC) %>% 
+  pivot_longer(c(AIC, BIC)) %>% 
+  ggplot(mapping = aes(x = model_name, y = value)) +
+  geom_point(size = 5) +
+  facet_wrap(~name, scales = 'free_y') +
+  theme_bw()
+```
+
+- Use information criterion (AIC/BIC) for model selection since models are developed from training set without resampling.
+
+- Best models
+  - Based on the AIC/BIC, model 'G' i.e `Model_7`is the best model.
+  - Model 'E' i.e Model_5 is the second best model.
+  - Model 'I' i.e Model_9 is the third best model.
+
+### Coefficient Plot
+
+**Visualize the coefficient summaries for the top 3 models.**  
+
+```{r}
+Model_7 %>% 
+  coefplot::coefplot() +
+  theme_bw()
+
+Model_9 %>% 
+  coefplot::coefplot() +
+  theme_bw()
+
+Model_5 %>% 
+  coefplot::coefplot() +
+  theme_bw()
+```
+
+- Each model contains some significant coefficients, but it looks like majority of them are non-significant.
+- For the "Interactions of basis functions with other basis functions" (`Model_9`) the coefficients are very small.
+
+### Important Features
+
+**Extract significant coefficients and arrange by overall score.**  
+
+# Variable importance for Models
+```{r}
+var_importance_results <- varImp(Model_5)
+result_data <- data.frame(Variable = rownames(var_importance_results), Importance = var_importance_results$Overall)
+result_data <- result_data[order(-result_data$Importance), ]
+print(result_data)
+```
+Input G seemns to be the most important.
+
+```{r}
+var_importance_results <- varImp(Model_7)
+result_data <- data.frame(Variable = rownames(var_importance_results), Importance = var_importance_results$Overall)
+result_data <- result_data[order(-result_data$Importance), ]
+print(result_data)
+```
+Interaction of Lightness with R and G seems to be the most important here.
+
+```{r}
+var_importance_results <- varImp(Model_9)
+result_data <- data.frame(Variable = rownames(var_importance_results), Importance = var_importance_results$Overall)
+result_data <- result_data[order(-result_data$Importance), ]
+print(result_data)
+```
+Input G seemns to be the most important.
+
+# Save the models
+```{r, save_mod01}
+Model_7 %>% readr::write_rds("Model_7.rds")
+Model_5 %>% readr::write_rds("Model_5.rds")
+Model_9 %>% readr::write_rds("Model_9.rds")
+```

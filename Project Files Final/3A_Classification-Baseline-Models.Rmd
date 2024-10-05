@@ -1,0 +1,249 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Part 3A, Classification Baseline Models"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_packages}
+library(tidyverse)
+library(coefplot)
+```
+
+The code chunk below reads in the final project data.  
+
+```{r, read_final_data}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+```
+
+## Binary classification task
+
+The Binary output variable, `outcome`, is a numeric variable.  
+
+```{r, show_outcome_class}
+df %>% pull(outcome) %>% class()
+```
+
+However, there are **only** two unique values for `outcome`.  
+
+```{r, show_outcome_values}
+df %>% count(outcome)
+```
+
+As stated previously, `outcome = 1` denotes the **EVENT** while `outcome = 0` denotes the **NON-EVENT**. Thus, the `outcome` variable uses the 0/1 encoding! This encoding is appropriate for `glm()` and the functions we create in homework assignments, and lecture examples. However, `caret` and `tidymodels` prefer a different encoding. For those reasons, two different binary classification data sets are defined. The first should be used for Parts iiiA) and iiiB) while the second should be used for iiiD).  
+
+The data set associated with iiiA) and iiiB) is created for you below. It removes the `response` variable so that way you can focus on the inputs and binary outcome.  
+
+```{r, make_iiiA_data}
+dfiiiA <- df %>% 
+  select(-response)
+
+dfiiiA %>% glimpse()
+```
+
+The data set associated with iiiD) changes the data type of the `outcome` variable. The `ifelse()` function is used to convert `outcome` to a character data type. The value of `outcome = 1` is converted to the string `'event'` and the value of `outcome = 0` is converted to `'non_event'`. The `outcome` data type is then converted to a factor (R's categorical variable data type) with `'event'` forced as the first level.  
+
+```{r, make_iiiD_data}
+dfiiiD <- df %>% 
+  select(-response) %>% 
+  mutate(outcome = ifelse(outcome == 1, 'event', 'non_event'),
+         outcome = factor(outcome, levels = c('event', 'non_event')))
+
+dfiiiD %>% glimpse()
+```
+
+By converting `outcome` to a factor, the unique values of the variables are "always known":  
+
+```{r, show_outcome_levels}
+dfiiiD %>% pull(outcome) %>% levels()
+```
+
+However, the value counts are the same as the original encoding.  
+
+```{r, confirm_outcome_Counts}
+dfiiiD %>% count(outcome)
+```
+```{r}
+sel_num <- dfiiiA %>% select_if(is_double) %>% select(sort(names(.))) %>% colnames()
+sel_num_in <- setdiff(sel_num, "response")
+sel_cat <- dfiiiA %>% select(!one_of(sel_num)) %>% colnames()
+sel_cat_in <- setdiff(sel_cat, "outcome")
+```
+----
+
+In this section, several baseline linear models are trained using `glm`.  
+
+- Models are compared based on AIC/BIC.  
+- Important features from models are discussed.  
+
+----
+
+## Model Fitting
+
+**Create generalized linear models to fit the data.** 
+
+### Predefined Models
+
+**Fit 10 linear models.**  
+
+Use lm() to fit linear models. You must use the following:
+1 Intercept-only model – no INPUTS!
+2 Categorical variables only – linear additive
+3 Continuous variables only – linear additive
+4 All categorical and continuous variables – linear additive
+5 Interaction of the categorical inputs with all continuous inputs main effects
+6 Add categorical inputs to all main effect and all pairwise interactions of continuous inputs
+7 Interaction of the categorical inputs with all main effect and all pairwise interactions of continuous inputs
+•  3 models with basis functions of your choice
+8 Try non-linear basis functions based on your EDA.
+9 Can consider interactions of basis functions with other basis functions!
+10 Can consider interactions of basis functions with the categorical inputs! 
+
+Slice the data with certain inputs to facilitate model building.
+
+```{r}
+df_cat <- dfiiiA %>% select(-all_of(sel_num_in))
+df_num <- dfiiiA %>% select(-all_of(sel_cat_in))
+```
+
+
+
+```{r}
+# fit the predefined models
+mod_3A1 <- glm(outcome ~ 1, family=binomial, dfiiiA)
+mod_3A2 <- glm(outcome ~ Lightness + Saturation, family=binomial, dfiiiA)
+mod_3A3 <- glm(outcome ~ ., family=binomial, df_num)
+mod_3A4 <- glm(outcome ~ ., family=binomial, dfiiiA)
+
+mod_3A5 <- glm(outcome ~ (Lightness + Saturation) * (R + G + B + Hue), family=binomial, data = dfiiiA)
+mod_3A6 <- glm(outcome ~ (R + G + B + Hue)^2 + Lightness + Saturation, family=binomial, data = dfiiiA)
+mod_3A7 <- glm(outcome ~ (Lightness + Saturation) * (G + B + Hue)^2, family=binomial, data = dfiiiA)
+```
+
+
+### Custom Basis Models
+
+**Fit 3 custom basis models.**  
+
+**1. Since some variables showed strong positive correlations with the outcome,adding interaction terms to capture potential dependencies.** 
+
+```{r model}
+# Model with interaction terms
+mod_3A8 <- glm(outcome ~ R + G + B + Hue + (R * G) + (R * B) + (G * Hue), family=binomial, data = dfiiiA)
+```
+
+
+```{r model1}
+mod_3A9 <- glm(outcome ~ R + G + B + Hue + R^2 + G^2 + (R * G) + (R * G * B) + Hue^2, family=binomial, data = dfiiiA)
+```
+
+
+```{r model2}
+Factor_Lightness <- as.factor(dfiiiA$Lightness)
+Factor_Saturation <- as.factor(dfiiiA$Saturation)
+mod_3A10 <- glm(outcome ~ R + G + R^2 + G^2 + 
+                         (R*as.numeric(Factor_Lightness)) + (G*as.numeric(Factor_Saturation)) + Lightness + Saturation,
+                         family=binomial, data = dfiiiA)
+```
+
+----
+
+## Conclusions
+
+```{r, save_mod01}
+mod_3A1 %>% readr::write_rds("mod_3A1.rds")
+mod_3A2 %>% readr::write_rds("mod_3A2.rds")
+mod_3A3 %>% readr::write_rds("mod_3A3.rds")
+mod_3A4 %>% readr::write_rds("mod_3A4.rds")
+mod_3A5 %>% readr::write_rds("mod_3A5.rds")
+mod_3A6 %>% readr::write_rds("mod_3A6.rds")
+mod_3A7 %>% readr::write_rds("mod_3A7.rds")
+mod_3A8 %>% readr::write_rds("mod_3A8.rds")
+mod_3A9 %>% readr::write_rds("mod_3A9.rds")
+mod_3A10 %>% readr::write_rds("mod_3A10.rds")
+```
+
+### Model Comparison
+
+**Print out the model metrics.**  
+
+```{r}
+extract_metrics <- function(mod_object, mod_name)
+{
+  broom::glance(mod_object) %>% 
+    mutate(model_name = mod_name)
+}
+```
+
+```{r}
+glm_mle_results <- purrr::map2_dfr(list(mod_3A1, mod_3A2, mod_3A3, mod_3A4, mod_3A5, mod_3A6, mod_3A7, mod_3A8, mod_3A9, mod_3A10),
+                                   LETTERS[1:10],
+                                   extract_metrics)
+
+```
+
+```{r}
+#The AIC and BIC are visualized for the 10 models.
+glm_mle_results %>% 
+  select(model_name, AIC, BIC) %>% 
+  pivot_longer(c(AIC, BIC)) %>% 
+  ggplot(mapping = aes(x = model_name, y = value)) +
+  geom_point(size = 5) +
+  facet_wrap(~name, scales = 'free_y') +
+  theme_bw()
+```
+
+
+- Here, (AIC/BIC) is used as a criterion for model selection since models are developed from training set without resampling.  
+
+- Best models selected:
+  - Based on the BIC, select `mod_3A6`.
+  - Based on balance of the two, select `mod_3A4`
+  - Based on the AIC, select `mod_3A7`.  
+
+- mod_3A6 seems to be the best among the top 3 models selected. 
+
+### Coefficient Plot
+
+**Visualize the coefficient summaries for the top 3 models.**  
+
+```{r}
+coefplot(mod_3A6)
+coefplot(mod_3A7)
+coefplot(mod_3A4)
+```
+
+- Each model contains some significant coefficients, but it looks like majority of them are non-significant.
+
+### Important Features
+
+- Filter each model for significant coefficients (uncertainty interval do not span 0). Then rank by their estimated coefficients in descending order.  
+  - Those with higher coefficients indicate more impact on the response since the inputs are standardized.
+  
+```{r}
+filter_and_rank <- function(model) {
+  # Extract coefficients and their uncertainty intervals
+  coef_table <- summary(model)$coefficients
+  significant_coefs <- coef_table[coef_table[, 4] < 0.05, ] 
+  
+  # Rank coefficients by their estimated values in descending order
+  ranked_coefs <- significant_coefs[order(-abs(significant_coefs[, 1])), ]
+  
+  return(ranked_coefs)
+}
+```
+
+```{r}
+filter_and_rank(mod_3A6) %>% knitr::kable()
+filter_and_rank(mod_3A7) %>% knitr::kable()
+filter_and_rank(mod_3A4) %>% knitr::kable()
+```
+
+
+- As per the models, input Saturation with 'gray' seems to be the most important.
+
+----

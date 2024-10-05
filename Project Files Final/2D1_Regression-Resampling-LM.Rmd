@@ -1,0 +1,178 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Part 2D1, Regression - Resampling - LM"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+tidymodels_prefer()
+library(glmnet)
+```
+
+
+```{r, read_final_data}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+dfii <- df %>% 
+  mutate(y = boot::logit( (response - 0) / (100 - 0) ) ) %>% 
+  select(R, G, B, 
+         Lightness, Saturation, Hue,
+         y)
+
+dfii %>% glimpse()
+```
+
+
+## Linear Models
+
+Train the 2 predefined linear models and 3 custom basis linear models selected from section 2A using resampling.  
+
+**Create the blueprints for data preprocessing & feature engineering.**  
+
+**The preprocessing steps.**  
+
+```{r preprocess}
+bp_prep <- recipe(y ~ ., data=dfii) %>%
+  step_normalize(all_numeric_predictors())
+  # prep(training=df_regr, retain=T) %>% bake(new_data=NULL)
+```
+
+### Predefined models
+
+**`2D1`: All categorical and continuous inputs - linear additive features.**  
+
+```{r mod_2D1}
+bp_2D1 <- bp_prep %>%
+  step_dummy(all_nominal_predictors())
+```
+
+**`2D2`: All pairwise interactions of continuous inputs, include additive categorical features.**  
+
+```{r mod_2D2}
+bp_2D2 <- bp_prep %>%
+  step_interact(~ all_numeric_predictors():all_numeric_predictors(), sep = ":") %>%
+  step_dummy(all_nominal_predictors())
+```
+
+### Custom models
+
+```{r}
+Model_5 <- readr::read_rds("Model_7.rds")
+```
+
+
+**`bp_2D3`: Interaction of the categorical inputs with all continuous inputs main effects.**  
+
+```{r mod_2D3}
+bp_2D3 <- bp_prep %>%
+  step_interact(~ all_nominal_predictors():all_numeric_predictors(), sep = ":") %>% 
+  step_dummy(all_nominal_predictors())
+  
+# check # of features with corresponding model (+response -intercept)
+bp_2D3 %>% prep(training=dfii, retain=T) %>% bake(new_data=NULL) %>% ncol()
+coef(Model_5) %>% length()
+```
+
+----
+
+## Resampling
+
+### Setup
+
+**Define the resampling scheme.**  
+
+- Use 5 fold cross-validation with 5 repeats for resampling.
+- Will compare RMSE, MAE and R-Squared metrics.
+- Model specification: use `lm` engine to fit the models.
+
+```{r resample setup}
+set.seed(1324)
+cv_folds <- vfold_cv(dfii, v = 5, repeats = 5)
+my_metrics <- metric_set(rmse, mae, rsq)
+lm_spec <- linear_reg() %>% set_engine("lm")
+```
+
+
+**Create workflow set to fit.**  
+
+```{r}
+lm_wset <- workflow_set(
+  preproc = list(
+    all_additive = bp_2D1,
+    all_cont_pairwise = bp_2D2,
+    inter_cat_continuous= bp_2D3
+    ),
+  models = list(lm = lm_spec)
+  )
+```
+
+### Execute
+
+
+```{r execute, eval=TRUE}
+tune_2D_lm <- lm_wset %>%
+  workflow_map(
+    fn = "fit_resamples",
+    resamples = cv_folds,
+    metrics = my_metrics,
+    control = control_resamples(save_pred = F),
+    verbose = T
+  )
+```
+
+```{r save_result, eval=TRUE}
+tune_2D_lm %>% readr::write_rds("tune_2D_lm.rds")
+```
+
+----
+
+
+### Performance
+
+**Visualize and compare performances across the linear models.**  
+
+```{r}
+tune_2D_lm %>% collect_metrics() %>%
+  ggplot(aes(x=wflow_id, color=wflow_id)) +
+  geom_linerange(aes(ymin=mean-std_err, ymax=mean+std_err))+
+  geom_point(aes(y=mean), position = position_dodge(0.8)) +
+  facet_wrap(~ .metric, scales = "free_y") +
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  labs(color="model")
+```
+
+- Based on both MAE and RMSE, the best model should be the inter_cat_continuous (blue, `bp_2D3`).  
+
+### Best Model
+
+**Retrain the best model with resampling, and save predictions.**  
+
+```{r}
+lm_best_wflow_mae <- "inter_cat_continuous_lm"
+
+mod_2D_lm_best_wflow <- lm_wset %>%
+  extract_workflow(lm_best_wflow_mae)
+
+mod_2D_lm_best_resample <-
+  mod_2D_lm_best_wflow %>%
+  fit_resamples(
+    cv_folds,
+    metrics = my_metrics,
+    control = control_resamples(save_pred = T)
+  )
+
+mod_2D_lm_best_resample %>% collect_metrics() %>% select(-.config, -.estimator)
+```
+
+```{r}
+mod_2D_lm_best_wflow %>% readr::write_rds("mod_2D_lm_best_wflow.rds")
+mod_2D_lm_best_resample %>% readr::write_rds("mod_2D_lm_best_resample.rds")
+```
+
+----

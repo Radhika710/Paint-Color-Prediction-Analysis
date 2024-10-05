@@ -1,0 +1,181 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Part 3D1, Classification - Resampling - GLM"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_packages}
+library(tidyverse)
+library(caret)
+library(tidymodels)
+tidymodels_prefer()
+```
+
+
+```{r, make_iiiD_data}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+dfiiiD <- df %>% 
+  select(-response) %>% 
+  mutate(outcome = ifelse(outcome == 1, 'event', 'non_event'),
+         outcome = factor(outcome, levels = c('event', 'non_event')))
+
+dfiiiD %>% glimpse()
+```
+
+By converting `outcome` to a factor, the unique values of the variables are "always known":  
+
+```{r, show_outcome_levels}
+dfiiiD %>% pull(outcome) %>% levels()
+```
+
+However, the value counts are the same as the original encoding.  
+
+```{r, confirm_outcome_Counts}
+dfiiiD %>% count(outcome)
+```
+
+
+----
+
+## Generalized Linear Models
+
+Train the 2 predefined general linear models and 3 custom basis general linear models selected from section 2A using resampling.  
+
+**Create the blueprints for data preprocessing & feature engineering.**  
+
+```{r preprocess}
+bp_prep_cl <- recipe(outcome ~ ., data=dfiiiD) %>%
+  step_normalize(all_numeric_predictors())
+  #prep(training=df_clas, retain=T) %>% bake(new_data=NULL)
+```
+
+
+### Predefined models
+
+
+- `3D1`: All categorical and continuous inputs - linear additive features.
+
+```{r mod_3D1}
+bp_3D1 <- bp_prep_cl %>%
+  step_dummy(all_nominal_predictors())
+```
+
+- `3D2`: All pairwise interactions of continuous inputs, include additive categorical features.
+  
+```{r mod_3D2}
+bp_3D2 <- bp_prep_cl %>%
+  step_interact(~ all_numeric_predictors():all_numeric_predictors(), sep = ":") %>%
+  step_dummy(all_nominal_predictors())
+```
+
+
+### Custom models
+
+- Import previous models that are referenced here.
+```{r}
+mod_3A7 <- readr::read_rds("mod_3A7.rds")
+mod_3A6 <- readr::read_rds("mod_3A6.rds")
+```
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+my_ctrl <- trainControl(method = 'repeatedcv', number = 10, repeats = 3)
+my_metric <- "Accuracy"
+```
+
+----
+
+## Resampling
+
+### Setup
+
+**Define the resampling scheme.**  
+
+- Use 5 fold cross-validation with 5 repeats for resampling.
+- Will compare Accuracy, ROC area under curve metrics.  
+
+```{r resample setup}
+set.seed(1324)
+cv_folds <- vfold_cv(dfiiiD, v = 5, repeats = 5)
+my_metrics_cl <- metric_set(accuracy, roc_auc, mn_log_loss)
+glm_spec <- logistic_reg() %>% set_engine("glm")
+```
+
+**Create workflow set to fit.**  
+
+```{r workflow set}
+glm_wset <- workflow_set(
+  preproc = list(
+    all_additive = bp_3D1,
+    all_cont_pairwise = bp_3D2
+    ),
+  models = list(glm = glm_spec)
+  )
+```
+
+
+### Execute
+
+Note: to speed up knit, these two code blocks are set `eval=FALSE`. They can be manually executed in the rmarkdown file.  
+
+```{r execute, eval=TRUE}
+tune_3D_glm <- glm_wset %>%
+  workflow_map(
+    fn = "fit_resamples",
+    resamples = cv_folds,
+    metrics = my_metrics_cl,
+    control = control_resamples(save_pred = F),
+    verbose = T
+  )
+```
+
+----
+
+## Conclusions
+
+### Performance
+
+**Visualize and compare performances across 5 linear models.**  
+
+```{r overview}
+tune_3D_glm %>% collect_metrics() %>%
+  ggplot(aes(x=wflow_id, color=wflow_id)) +
+  geom_linerange(aes(ymin=mean-std_err, ymax=mean+std_err))+
+  geom_point(aes(y=mean), position = position_dodge(0.8)) +
+  facet_wrap(~ .metric, scales = "free_y") +
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) +
+  labs(color="model")
+```
+
+
+### Best Model
+
+**Finalize the workflow for the best model and retrain with resampling to save predictions.** 
+
+```{r}
+glm_best_wflow_roc <- "all_additive_glm"
+
+mod_3D_glm_best_wflow <- glm_wset %>%
+  extract_workflow(glm_best_wflow_roc)
+
+mod_3D_glm_best_resample <-
+  mod_3D_glm_best_wflow %>%
+  fit_resamples(
+    cv_folds,
+    metrics = my_metrics_cl,
+    control = control_resamples(save_pred = T)
+  )
+
+mod_3D_glm_best_resample %>% collect_metrics() %>% select(-.config, -.estimator)
+```
+
+```{r}
+mod_3D_glm_best_resample %>% readr::write_rds("mod_3D_glm_best_resample.rds")
+```
+
+----

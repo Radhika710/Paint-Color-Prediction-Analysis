@@ -1,0 +1,162 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Bonus - Sunthetic Data"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+theme_set(theme_linedraw())
+library(tidymodels)
+tidymodels_prefer()
+library(vip)
+```
+
+
+```{r}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+
+dfii <- df %>% 
+  mutate(y = boot::logit( (response - 0) / (100 - 0) ) ) %>% 
+  select(R, G, B, 
+         Lightness, Saturation, Hue,
+         y)
+
+dfiiiA <- df %>% 
+  select(-response)
+
+
+dfiiiD <- df %>% 
+  select(-response) %>% 
+  mutate(outcome = ifelse(outcome == 1, 'event', 'non_event'),
+         outcome = factor(outcome, levels = c('event', 'non_event')))
+```
+
+----
+
+Tasks
+- Identify the combinations of Lightness and Saturation that appear to be hardest to predict for the regression and classification tasks based on the best models.
+
+----
+
+## Hard to Predict
+
+The best model for the **regression task** was the XGB model.  
+The best model for the **classification task** was the XGB model.  
+
+**Read in the respective best model for each task.**  
+
+```{r}
+mod_regr <- readr::read_rds("mod_2D_adv_best_wflow.rds")
+mod_regr_resample <- readr::read_rds("mod_2D_adv_best_resample.rds")
+
+mod_clas <- readr::read_rds("mod_3D_adv_best_wflow.rds")
+mod_clas_resample <- readr::read_rds("mod_3D_adv_best_resample.rds")
+```
+
+----
+
+## Regression
+
+**Summarize the prediction error (MAE) across the resample repeated folds** 
+
+```{r}
+regr_pred <- mod_regr_resample %>%
+  # get all predictions across folds and repeats
+  collect_predictions() %>%
+  # join the training df
+  left_join(rowid_to_column(select(dfii,-y)), by = c(".row" = "rowid"))
+
+regr_pred %>%
+  group_by(id, id2, Lightness) %>%
+  mae(y, .pred) %>%
+  group_by(Lightness) %>%
+  summarise(mae = mean(.estimate)) %>%
+  ggplot() +
+  geom_pointrange(aes(
+    x=Lightness,
+    y=mae,
+    ymax=mae,
+    ymin = mae,
+    ))
+```
+
+- The combination of Lightness with dark is the most difficult to predict using the best regression model.  
+- The combination of Lightness with light is the easiest to predict using the best regression model. 
+
+```{r mae}
+regr_pred <- mod_regr_resample %>%
+  # get all predictions across folds and repeats
+  collect_predictions() %>%
+  # join the training df
+  left_join(rowid_to_column(select(dfii,-y)), by = c(".row" = "rowid"))
+
+regr_pred %>%
+  group_by(id, id2, Saturation) %>%
+  mae(y, .pred) %>%
+  group_by(Saturation) %>%
+  summarise(mae = mean(.estimate)) %>%
+  ggplot() +
+  geom_pointrange(aes(
+    x=Saturation,
+    y=mae,
+    ymax=mae,
+    ymin = mae,
+    ))
+```
+- The combination of Saturation with neutral is the most difficult to predict using the best regression model.
+- The combination of Saturation with gray is the easiest to predict using the best regression model.
+----
+
+## Classification
+
+**Summarize the mean log loss across the resample repeated folds** 
+
+```{r }
+clas_pred <- mod_clas_resample %>%
+  # get all predictions across folds and repeats
+  collect_predictions() %>%
+  # join the training df
+  left_join(rowid_to_column(select(dfii,-y)), by = c(".row" = "rowid"))
+
+clas_pred %>%
+  group_by(id, id2, Saturation) %>%
+  mn_log_loss(outcome, .pred_event) %>%
+  group_by(Saturation) %>%
+  summarise(mn_log_loss = mean(.estimate)) %>%
+  ggplot() +
+  geom_pointrange(aes(
+    x=Saturation,
+    y=mn_log_loss,
+    ymax=mn_log_loss,
+    ymin = mn_log_loss,
+    ))
+```
+
+- The combination of Saturation with neutral is the most difficult to predict using the best classification model.  
+- The combination of Saturation with bright is the easiest to predict using the best classification model. 
+
+```{r}
+clas_pred %>%
+  group_by(id, id2, Lightness) %>%
+  mn_log_loss(outcome, .pred_event) %>%
+  group_by(Lightness) %>%
+  summarise(mn_log_loss = mean(.estimate)) %>%
+  ggplot() +
+  geom_pointrange(aes(
+    x=Lightness,
+    y=mn_log_loss,
+    ymax=mn_log_loss,
+    ymin = mn_log_loss,
+    ))
+```
+- The combination of Lightness with dark is the most difficult to predict using the best classification model.  
+- The combination of Lightness with light is the easiest to predict using the best classification model. 
+
+----
+

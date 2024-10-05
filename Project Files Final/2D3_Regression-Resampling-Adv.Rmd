@@ -1,0 +1,240 @@
+---
+title: "INFSCI 2595 Final Project"
+subtitle: "Regression Resampling Advanced Models"
+author: "Radhika Purohit"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+theme_set(theme_linedraw())
+library(tidymodels)
+tidymodels_prefer()
+```
+
+```{r}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+dfii <- df %>% 
+  mutate(y = boot::logit( (response - 0) / (100 - 0) ) ) %>% 
+  select(R, G, B, 
+         Lightness, Saturation, Hue,
+         y)
+
+dfii %>% glimpse()
+```
+
+----
+
+## Advanced Models
+
+Train the following advanced models for the regression.
+
+- Neural network
+- Random forest
+- Gradient boosted tree
+- Multivariate Additive Regression Splines
+- Support Vector Machine
+
+### Models
+
+**The preprocessing steps.**  
+
+```{r}
+bp_2D_dummy <- recipe(y ~ ., data=dfii) %>%
+  step_dummy(all_nominal_predictors())
+bp_2D_norm <- bp_2D_dummy %>%
+  step_normalize(all_numeric_predictors())
+```
+
+**Model specifications.**  
+  
+```{r}
+nnet_spec <-
+  mlp(hidden_units = tune(), penalty = tune(), epochs = 2000) %>%
+  set_engine("nnet", MaxNWts = 2000, trace=FALSE) %>%
+  set_mode("regression")
+
+rf_spec <-
+   rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>%
+   set_engine("ranger") %>%
+   set_mode("regression")
+
+xgb_spec <-
+   boost_tree(tree_depth = tune(), learn_rate = tune(),
+              trees = tune(), mtry = tune(), sample_size = tune()) %>%
+   set_engine("xgboost") %>%
+   set_mode("regression")
+```
+
+**2 methods of your choice that we did not explicitly discuss in lecture**
+```{r}
+mars_spec <-
+   mars(prod_degree = tune()) %>% 
+   set_engine("earth") %>%
+   set_mode("regression")
+
+svm_spec <-
+   svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+   set_engine("kernlab") %>%
+   set_mode("regression")
+```
+
+### Workflows
+
+**Create two workflows based on whether input normalization preprocessing is required.**  
+
+```{r normalized}
+adv_wset_norm <-
+  workflow_set(
+    preproc = list(bp_2D_norm),
+    models = list(
+      SVM = svm_spec,
+      NNet = nnet_spec
+    )
+  )
+```
+
+```{r not-normalized}
+adv_wset_no_preproc <-
+  workflow_set(
+    preproc = list(bp_2D_dummy),
+    models = list(
+      MARS = mars_spec,
+      RF = rf_spec,
+      XGB = xgb_spec
+    )
+  )
+```
+
+**Combine the workflows into one for training.**  
+
+```{r}
+adv_wset_all <- bind_rows(adv_wset_no_preproc, adv_wset_norm) %>%
+  mutate(wflow_id = gsub("(recipe_)","",wflow_id))
+```
+
+----
+
+## Training
+
+### Setup
+
+**Resampling setup.**  
+
+```{r resampling}
+set.seed(1324)
+cv_folds <- vfold_cv(dfii, v = 5, repeats = 5)
+my_metrics <- metric_set(rmse, mae, rsq)
+```
+
+### Execute
+
+**Perform model tuning with default grid of 50 combinations for tuning parameters.**  
+
+```{r execute, eval=TRUE}
+# create cluster to allow parallel computing
+if (parallel::detectCores(logical=FALSE) > 3) {
+  library(doParallel)
+  num_cores <- parallel::detectCores(logical=FALSE)
+  cl <- makePSOCKcluster(num_cores - 2)
+  registerDoParallel(cl)
+}
+# start tuning
+tune_2D_adv <- adv_wset_all %>%
+  workflow_map(
+    fn = "tune_grid",
+    resamples = cv_folds,
+    metrics = my_metrics,
+    grid = 20,
+    control = control_grid(
+      save_pred = FALSE,
+      parallel_over = "everything",
+      save_workflow = TRUE
+    ),
+    verbose = TRUE
+  )
+# close the cluster
+stopCluster(cl)
+registerDoSEQ()
+```
+
+----
+
+## Conclusions
+
+```{r}
+names(tune_2D_adv$result) <- tune_2D_adv$wflow_id
+```
+
+### Performance
+
+**Examine metrics across all models trained.**
+
+```{r visualize grid}
+tune_2D_adv %>%
+  autoplot(
+    rank_metric = "rmse",
+    metric = c("mae","rmse","rsq"),
+    select_best = F) +
+  facet_wrap(~.metric, scale = "free_y", ncol = 1)
+```
+
+
+**Compare the model performance metrics for the best tuning parameters for each model type.**  
+
+```{r visualize best}
+tune_2D_adv %>%
+  autoplot(
+    rank_metric = "rmse",
+    metric = c("mae","rmse","rsq"),
+    select_best = T) +
+  geom_text(
+    aes(y = mean, label = wflow_id),
+    nudge_x = 0.2, angle = 90) +
+  theme(legend.position = "none")
+```
+
+- Judging from the metrics, XGB is the best model.  
+
+### Best Model
+
+**Extract the best tuning parameters from the best model.**  
+
+```{r}
+adv_best_wf <- "XGB"
+
+adv_best_rmse_params <-
+  tune_2D_adv$result[[adv_best_wf]] %>%
+  select_best(metric = "rmse")
+adv_best_rmse_params %>% select(-starts_with("."))
+```
+
+**Finalize the workflow for the best model and retrain with resampling to save predictions.** 
+
+```{r}
+mod_2D_adv_best_wflow <-
+  adv_wset_all %>%
+  extract_workflow(adv_best_wf) %>%
+  finalize_workflow(
+    parameters = adv_best_rmse_params
+  )
+
+mod_2D_adv_best_resample <-
+  mod_2D_adv_best_wflow %>%
+  fit_resamples(
+    resamples = cv_folds,
+    metrics = my_metrics,
+    control = control_resamples(save_pred = T)
+  )
+```
+
+```{r}
+mod_2D_adv_best_wflow %>% readr::write_rds("mod_2D_adv_best_wflow.rds")
+mod_2D_adv_best_resample %>% readr::write_rds("mod_2D_adv_best_resample.rds")
+```
+
+----
